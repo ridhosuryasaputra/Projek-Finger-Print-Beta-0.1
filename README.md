@@ -59,9 +59,9 @@ Aplikasi ini **hanya menampilkan data (read-only)**. Database JIBAS tidak pernah
 **Pemasangan singkat:** salin folder ke server Debian 12, lalu jalankan `bash deploy/install-lxc.sh`.
 Untuk memperbarui versi lama: `bash deploy/update.sh`.
 
-## 3. Yang diperbarui dari V ke V0.1
+## 3. Yang diperbarui dari V0 ke V0.1
 
-**V0.1** hanya punya peran **guru**.
+**V0** hanya punya peran **guru**.
 
 **V0.1 menambahkan:**
 - Peran baru: **kesiswaan**, **admin**, dan **orang tua**.
