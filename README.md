@@ -18,17 +18,20 @@ Yang dikelola aplikasi ini hanya akun pengguna dan penugasan kelas, disimpan di 
 
 ## 2. Rancangan aplikasi
 
-**File terbaru:** `presensi-jibas V.02.zip` (V0.2). Versi sebelumnya: `presensi jibas V.01.zip`.
+**File terbaru:** `presensi-jibas V.05` (V0.5). Versi sebelumnya: V.04, V.03, V.02, dan `presensi jibas V.01.zip`.
 
-**Teknologi:** Laravel (PHP), Nginx + PHP-FPM, Debian 12 (VM / Proxmox LXC), SQLite untuk akun lokal.
+**Teknologi:** Laravel 12 (PHP 8.2), Nginx + PHP-FPM, Debian 12 (VM / Proxmox LXC), SQLite untuk akun lokal,
+PhpSpreadsheet untuk ekspor Excel.
 
 **Sumber data dari JIBAS**
 
 | Data | Database JIBAS |
 |---|---|
-| Scan fingerprint (NIS, jam) | `jbsumum.cardscandata` |
-| Siswa dan kelas | `jbsakad` |
+| Scan fingerprint (NIS, jam) | `jbsumum.cardscandata` (bawaan) atau `jbssat.frpresence` |
+| Siswa, kelas, dan tingkat | `jbsakad` |
 | Akun dan data guru | `jbsuser.login`, `jbssdm.pegawai` |
+
+Sumber scan dipilih lewat `PRESENSI_SUMBER_SCAN` di `.env` (`cardscandata` atau `frpresence`).
 
 **Data yang disimpan aplikasi sendiri (SQLite lokal)**
 
@@ -44,27 +47,33 @@ Tabel lokal tidak memakai foreign key ke JIBAS, jadi perubahan data di JIBAS tid
 
 | Peran | Masuk dengan | Yang bisa dilihat |
 |---|---|---|
-| Guru (wali kelas) | NIP + password JIBAS, atau akun lokal dari admin | Hanya kelas yang ditugaskan admin (harian dan bulanan) |
-| Kesiswaan | Akun dari sekolah | Ringkasan seluruh sekolah, semua kelas, cari siswa, riwayat siswa |
+| Publik / orang tua | Tanpa login, halaman `/cari` | Jam masuk dan pulang hari ini untuk satu NIS |
+| Guru (wali kelas) | NIP + password JIBAS, atau akun lokal dari admin | Hanya kelas yang ditugaskan admin (harian dan bulanan), plus ekspor kelasnya |
+| Kesiswaan | Akun dari sekolah | Ringkasan seluruh sekolah, semua kelas, cari siswa, riwayat siswa, ekspor |
 | Kepala Sekolah | Akun dari sekolah | Sama dengan kesiswaan, untuk memantau |
-| Admin | Akun dari sekolah | Semua halaman kesiswaan + kelola akun + tugaskan kelas guru + buat akun orang tua per kelas |
-| Orang tua | Akun dari sekolah | Hanya presensi anaknya sendiri |
+| Admin | Akun dari sekolah | Semua halaman kesiswaan + kelola akun + buat akun orang tua per kelas |
+| Orang tua (akun) | Akun dari sekolah | Hanya presensi anaknya sendiri |
 
 **Aturan presensi**
 - Masuk = scan pertama hari itu, pulang = scan terakhir.
-- Terlambat jika scan pertama melewati jam masuk (bisa diatur).
+- Terlambat jika scan pertama melewati jam masuk (`PRESENSI_JAM_MASUK`, toleransi `PRESENSI_TOLERANSI`).
 - Hari sekolah = tanggal yang punya minimal satu scan siswa.
+- Di halaman `/cari` dan ekspor harian, siswa tanpa scan dianggap **Alpa** setelah batas jam pulang
+  (bawaan 14:00, kunci `jam_pulang`). Hari Minggu ditampilkan sebagai libur.
 
 **Keamanan**
 - Koneksi ke JIBAS memakai user MySQL khusus yang hanya boleh `SELECT`.
 - Port database JIBAS tidak dibuka ke internet; yang dibuka hanya web (80/443) dengan HTTPS.
 - Orang tua hanya bisa membuka siswa yang terhubung ke akunnya, dan guru hanya kelas yang ditugaskan (dicek di server).
 - Password akun lokal disimpan dengan bcrypt.
+- Pembatasan percobaan: login 10 kali per menit, halaman `/cari` 30 kali per menit, ekspor 20 kali per menit.
+- Halaman `/cari` hanya menerima NIS yang persis sama dan hanya menampilkan siswa aktif.
 
 **Isi folder**
 
-    app/        kode aplikasi (controller, service, middleware)
-    config/     pengaturan presensi (pemetaan tabel JIBAS, jam masuk)
+    app/        kode aplikasi (controller, service, middleware, perintah artisan)
+    config/     pengaturan presensi (pemetaan tabel JIBAS, jam masuk, sumber scan)
+    public/     logo, foto gedung, latar, dan font tampilan
     resources/  tampilan halaman
     routes/     daftar alamat halaman
     database/   migrasi akun lokal dan data contoh untuk uji coba
@@ -73,6 +82,10 @@ Tabel lokal tidak memakai foreign key ke JIBAS, jadi perubahan data di JIBAS tid
 **Pemasangan singkat:** salin folder ke server Debian 12, lalu jalankan `bash deploy/install-lxc.sh`.
 Untuk memperbarui versi lama: `bash deploy/update.sh` (migrasi database dijalankan otomatis,
 pengaturan `.env` tidak ditimpa).
+
+Pemasangan manual: `composer install`, salin `.env.example` menjadi `.env`, isi `JIBAS_DB_*`,
+jalankan `php artisan key:generate` dan `php artisan migrate`, lalu buat admin pertama dengan
+`php artisan presensi:admin`.
 
 ## 3. Yang diperbarui dari V0 ke V0.1
 
@@ -112,14 +125,33 @@ pengaturan `.env` tidak ditimpa).
   otomatis dari kolom wali kelas di JIBAS. Guru yang belum ditugaskan melihat daftar kosong.
   Setelah menjalankan `bash deploy/update.sh`, tugaskan kelas ke setiap guru.
 
-**Batasan yang diketahui di V0.2:**
+## 5. Yang diperbarui dari V0.2 ke V0.5
+
+**V0.3 sampai V0.5 menambahkan:**
+- **Halaman publik `/cari` untuk orang tua**: cukup memasukkan NIS (tanpa login) untuk melihat jam masuk,
+  jam pulang, dan status hari ini (hadir, sudah masuk, belum scan, alpa, atau libur). Kelas ditampilkan
+  bersama tingkatnya, misalnya "X Â· TJKT 1".
+- **Ekspor laporan ke Excel (.xlsx) dan CSV**:
+  - Per kelas, harian atau bulanan. Guru hanya bisa mengunduh kelas yang diwalikan.
+  - Seluruh sekolah, harian atau bulanan, untuk kesiswaan, kepala sekolah, dan admin.
+  - Tombol "Unduh Excel" dan "Unduh CSV" ada di halaman kelas dan dasbor kesiswaan.
+- **Dua sumber data scan**: `cardscandata` (modul kartu, bawaan) atau `frpresence` (modul presensi JIBAS),
+  dipilih lewat `.env`. Opsi `PRESENSI_FR_HANYA_AKTIF` membatasi ke baris aktif.
+- **Pengaturan baru di `.env`**: `PRESENSI_SUMBER_SCAN`, `PRESENSI_FR_HANYA_AKTIF`, `JIBAS_PASSWORD_HASH`
+  (md5, sha1, atau plain), `PRESENSI_TIMEZONE` (bawaan Asia/Jakarta), `JIBAS_DB_SAT`.
+- **Status Alpa** setelah batas jam pulang untuk siswa yang tidak punya scan sama sekali.
+- **Tampilan baru**: halaman login dirombak dengan logo dan foto gedung sekolah, font lokal
+  (Plus Jakarta Sans), dan tampilan Ringkasan Sekolah yang lebih rapi di HP.
+- **Pembatasan percobaan** (throttle) pada login, pencarian publik, dan ekspor.
+
+**Batasan yang diketahui di V0.5:**
 - Halaman admin untuk menugaskan kelas ke guru JIBAS (yang login dengan NIP) belum ada; sementara
   penugasannya lewat perintah di server. Guru lokal sudah bisa diatur langsung dari form pengguna.
 - Guru lokal belum punya menu ganti password sendiri; password direset admin lewat menu Ubah.
 
 ## Status
 
-Versi **beta (V0.2)**. Peran guru sudah diuji di VM. Peran kesiswaan, kepala sekolah, admin, orang tua,
-dan guru lokal masih dalam tahap uji coba, dan pembacaan data JIBAS asli (password, kolom tabel
-siswa dan kelas, tahun ajaran) masih perlu diverifikasi. Data scan fingerprint asli belum ada karena
-siswa dan guru belum mulai absen.
+Versi **beta (V0.5)**. Aplikasi sudah terpasang di server Debian 12, dan login, ekspor Excel, serta
+tampilan sudah berjalan di server. Pembacaan data JIBAS asli (cara penyimpanan password, kolom tabel
+siswa dan kelas, tahun ajaran) masih perlu diverifikasi, dan data scan fingerprint asli baru bisa
+diuji setelah siswa dan guru mulai absen.
